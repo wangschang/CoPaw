@@ -135,7 +135,6 @@ class TestHybridMemoryManagerMockMem0Search:
             ]
         }
         manager._mem0 = mock_mem0
-        manager._mem0_is_cloud = False
         manager._mem0_user_id = "test_user"
         manager._mem0_search_limit = 3
 

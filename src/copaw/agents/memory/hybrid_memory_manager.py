@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # 尝试导入 mem0，不可用时优雅降级
 try:
-    from mem0 import Memory as Mem0Memory, MemoryClient
+    from mem0 import Memory as Mem0Memory
 
     _MEM0_AVAILABLE = True
 except ImportError:
@@ -44,12 +44,19 @@ class HybridMemoryManager(MemoryManager):
 
     上下文压缩（compact_memory）、文件存储、BM25检索等完全不动。
 
+    mem0 仅支持本地模式（chromadb 向量存储），无需也不可设置 MEM0_API_KEY。
+    本地数据文件（.mem0_chroma/、.mem0_history.db）自动生成，已在 .gitignore 中。
+
     Environment Variables（新增，全部可选）:
         USE_HYBRID_MEMORY: 是否启用混合模式，默认 false（需显式开启）
         MEM0_ENABLE:       是否初始化 mem0，默认 true
-        MEM0_API_KEY:      mem0 云平台 Key（与本地模式二选一）
         MEM0_USER_ID:      mem0 用户隔离 ID，默认 "copaw_default"
         MEM0_SEARCH_LIMIT: mem0 检索返回条数，默认 3
+
+    本地 LLM 环境变量（由 mem0 自动复用）:
+        OPENAI_API_KEY / MODEL_API_KEY: LLM API Key
+        MODEL_BASE_URL:                 LLM Base URL（可选，支持本地代理）
+        MODEL_NAME:                     模型名称，默认 "gpt-4o-mini"
     """
 
     def __init__(self, working_dir: str):
@@ -58,7 +65,6 @@ class HybridMemoryManager(MemoryManager):
 
         self._mem0_working_dir: str = working_dir
         self._mem0: Optional[object] = None
-        self._mem0_is_cloud: bool = False
         self._mem0_user_id: str = os.environ.get("MEM0_USER_ID", "copaw_default")
         self._mem0_search_limit: int = int(
             os.environ.get("MEM0_SEARCH_LIMIT", "3")
@@ -77,59 +83,54 @@ class HybridMemoryManager(MemoryManager):
             )
 
     def _init_mem0(self) -> None:
-        """初始化 mem0 实例（云端或本地，失败时静默降级）。"""
-        mem0_api_key = os.environ.get("MEM0_API_KEY", "")
+        """初始化 mem0 本地实例（失败时静默降级）。
+
+        mem0 仅支持本地模式，使用 chromadb 作为向量存储。
+        LLM 配置自动复用 CoPaw 已有的环境变量（OPENAI_API_KEY / MODEL_API_KEY、
+        MODEL_BASE_URL、MODEL_NAME）。
+        """
         try:
-            if mem0_api_key:
-                # 云平台模式
-                self._mem0 = MemoryClient(api_key=mem0_api_key)
-                self._mem0_is_cloud = True
-                logger.info(
-                    "HybridMemoryManager: mem0 cloud initialized (user_id=%s)",
-                    self._mem0_user_id,
-                )
-            else:
-                # 本地模式：复用 CoPaw 已有的 LLM 环境变量
-                llm_api_key = os.environ.get(
-                    "MODEL_API_KEY"
-                ) or os.environ.get("OPENAI_API_KEY", "")
-                llm_base_url = os.environ.get("MODEL_BASE_URL", "")
-                llm_model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+            # 本地模式：复用 CoPaw 已有的 LLM 环境变量
+            llm_api_key = os.environ.get(
+                "MODEL_API_KEY"
+            ) or os.environ.get("OPENAI_API_KEY", "")
+            llm_base_url = os.environ.get("MODEL_BASE_URL", "")
+            llm_model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
-                mem0_config: dict = {
-                    "llm": {
-                        "provider": "openai",
-                        "config": {
-                            "model": llm_model,
-                            "api_key": llm_api_key,
-                        },
+            mem0_config: dict = {
+                "llm": {
+                    "provider": "openai",
+                    "config": {
+                        "model": llm_model,
+                        "api_key": llm_api_key,
                     },
-                    "vector_store": {
-                        "provider": "chroma",
-                        "config": {
-                            "collection_name": "copaw_mem0_hybrid",
-                            "path": os.path.join(
-                                self._mem0_working_dir,
-                                ".mem0_chroma",
-                            ),
-                        },
+                },
+                # 使用 chromadb 本地向量存储，数据目录自动生成
+                "vector_store": {
+                    "provider": "chroma",
+                    "config": {
+                        "collection_name": "copaw_mem0_hybrid",
+                        "path": os.path.join(
+                            self._mem0_working_dir,
+                            ".mem0_chroma",
+                        ),
                     },
-                    "history_db_path": os.path.join(
-                        self._mem0_working_dir,
-                        ".mem0_history.db",
-                    ),
-                }
-                if llm_base_url:
-                    mem0_config["llm"]["config"]["base_url"] = llm_base_url
+                },
+                "history_db_path": os.path.join(
+                    self._mem0_working_dir,
+                    ".mem0_history.db",
+                ),
+            }
+            if llm_base_url:
+                mem0_config["llm"]["config"]["base_url"] = llm_base_url
 
-                self._mem0 = Mem0Memory.from_config(mem0_config)
-                self._mem0_is_cloud = False
-                logger.info(
-                    "HybridMemoryManager: mem0 local initialized "
-                    "(user_id=%s, model=%s)",
-                    self._mem0_user_id,
-                    llm_model,
-                )
+            self._mem0 = Mem0Memory.from_config(mem0_config)
+            logger.info(
+                "HybridMemoryManager: mem0 local initialized "
+                "(user_id=%s, model=%s)",
+                self._mem0_user_id,
+                llm_model,
+            )
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(
                 "HybridMemoryManager: mem0 init failed, falling back to "
@@ -175,14 +176,11 @@ class HybridMemoryManager(MemoryManager):
                 user_id=self._mem0_user_id,
                 limit=self._mem0_search_limit,
             )
-            if self._mem0_is_cloud:
-                memories = results or []
-            else:
-                memories = (
-                    results.get("results", [])
-                    if isinstance(results, dict)
-                    else []
-                )
+            memories = (
+                results.get("results", [])
+                if isinstance(results, dict)
+                else []
+            )
             return [
                 item["memory"]
                 for item in memories
