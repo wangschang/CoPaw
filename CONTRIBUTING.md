@@ -74,6 +74,9 @@ docs(skills): document Skills Hub import
   pre-commit run --all-files
   pytest
   ```
+  > **Note:** `pip install -e ".[dev,full]"` will automatically build the console frontend
+  > when [Node.js / npm](https://nodejs.org/) is installed.  If npm is not present the
+  > Python package still installs, but the web UI won't be available locally.
 - **If pre-commit modifies files:** Commit those changes, then rerun
   `pre-commit run --all-files` until it passes cleanly.
 - **CI policy:** Pull requests with failing pre-commit checks are not merge-ready.
