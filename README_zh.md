@@ -381,6 +381,56 @@ copaw app # 启动服务
 
 ---
 
+## HybridMemoryManager（本地 mem0 集成）
+
+CoPaw 内置 `HybridMemoryManager`，将 reme-ai（默认记忆系统）与 [mem0](https://github.com/mem0ai/mem0) 结合，实现个性化事实提取。
+
+> **说明：** mem0 仅支持**本地模式**，使用 [chromadb](https://www.trychroma.com/) 作为向量存储。**无需也不可设置 `MEM0_API_KEY`**。本地数据文件（`.mem0_chroma/`、`.mem0_history.db`）自动生成，已在 `.gitignore` 中。
+
+### 必需环境变量
+
+| 变量 | 是否必须 | 说明 |
+|---|---|---|
+| `USE_HYBRID_MEMORY` | **是**（开启时） | 设为 `true` 启用 `HybridMemoryManager` |
+| `OPENAI_API_KEY` 或 `MODEL_API_KEY` | **是** | mem0 使用的 LLM API Key |
+| `MODEL_NAME` | 否 | LLM 模型名称（默认：`gpt-4o-mini`） |
+| `MODEL_BASE_URL` | 否 | LLM Base URL，如本地代理（ollama 等） |
+| `MEM0_USER_ID` | 否 | 用户隔离 ID（默认：`copaw_default`） |
+| `MEM0_SEARCH_LIMIT` | 否 | 每次检索追加的 mem0 事实条数（默认：`3`） |
+| `MEM0_ENABLE` | 否 | 设为 `false` 可在混合模式下禁用 mem0（默认：`true`） |
+
+### 安装依赖
+
+```bash
+pip install mem0ai chromadb
+```
+
+### 启动 CoPaw（本地 HybridMemoryManager）
+
+```bash
+export OPENAI_API_KEY=<your-api-key>
+export MODEL_NAME=gpt-4o-mini
+# 可选：本地 LLM 代理（如 ollama）
+# export MODEL_BASE_URL=http://localhost:11434/v1
+export USE_HYBRID_MEMORY=true
+export MEM0_ENABLE=true
+python3 -m copaw
+```
+
+### 运行单元测试（纯本地，不调用真实 LLM）
+
+```bash
+export USE_HYBRID_MEMORY=true && export MEM0_ENABLE=false && pytest tests/test_hybrid_memory.py -v
+```
+
+或使用提供的 shell 脚本：
+
+```bash
+bash scripts/test_hybrid_memory_local.sh
+```
+
+---
+
 ## 常见问题
 
 常见问题、排错指南与已知问题，请访问 **[FAQ 页面](https://copaw.agentscope.io/docs/faq)**。

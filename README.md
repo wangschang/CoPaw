@@ -375,6 +375,56 @@ Full docs in this repo: [website/public/docs/](website/public/docs/).
 
 ---
 
+## HybridMemoryManager (Local mem0 Integration)
+
+CoPaw includes a `HybridMemoryManager` that combines reme-ai (the default memory system) with [mem0](https://github.com/mem0ai/mem0) for personalized fact extraction.
+
+> **Note:** mem0 runs in **local-only mode** using [chromadb](https://www.trychroma.com/) for vector storage. `MEM0_API_KEY` is **not required and not supported**. Local data files (`.mem0_chroma/`, `.mem0_history.db`) are created automatically and are already listed in `.gitignore`.
+
+### Required environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `USE_HYBRID_MEMORY` | **yes** (to enable) | Set to `true` to activate `HybridMemoryManager` |
+| `OPENAI_API_KEY` or `MODEL_API_KEY` | **yes** | API key for the LLM used by mem0 |
+| `MODEL_NAME` | no | LLM model name (default: `gpt-4o-mini`) |
+| `MODEL_BASE_URL` | no | LLM base URL, e.g. for a local proxy like ollama |
+| `MEM0_USER_ID` | no | User isolation ID (default: `copaw_default`) |
+| `MEM0_SEARCH_LIMIT` | no | Number of mem0 facts appended per search (default: `3`) |
+| `MEM0_ENABLE` | no | Set to `false` to disable mem0 within hybrid mode (default: `true`) |
+
+### Install dependencies
+
+```bash
+pip install mem0ai chromadb
+```
+
+### Start CoPaw with HybridMemoryManager
+
+```bash
+export OPENAI_API_KEY=<your-api-key>
+export MODEL_NAME=gpt-4o-mini
+# Optional: for a local LLM proxy (e.g. ollama)
+# export MODEL_BASE_URL=http://localhost:11434/v1
+export USE_HYBRID_MEMORY=true
+export MEM0_ENABLE=true
+python3 -m copaw
+```
+
+### Run unit tests (local mem0 only, no real LLM calls)
+
+```bash
+export USE_HYBRID_MEMORY=true && export MEM0_ENABLE=false && pytest tests/test_hybrid_memory.py -v
+```
+
+Or use the provided shell script:
+
+```bash
+bash scripts/test_hybrid_memory_local.sh
+```
+
+---
+
 ## FAQ
 
 For common questions, troubleshooting tips, and known issues, please visit the **[FAQ page](https://copaw.agentscope.io/docs/faq)**.
