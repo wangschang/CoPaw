@@ -38,7 +38,7 @@ from .tools import (
     create_memory_search_tool,
 )
 from .utils import process_file_and_media_blocks_in_message
-from ..agents.memory import MemoryManager
+from ..agents.memory import MemoryManager, create_memory_manager
 from ..config import load_config
 from ..constant import (
     MEMORY_COMPACT_RATIO,
@@ -133,6 +133,10 @@ class CoPawAgent(ReActAgent):
         )
 
         # Setup memory manager
+        # If no memory_manager provided, use factory to select implementation
+        # based on USE_HYBRID_MEMORY env var (supports HybridMemoryManager)
+        if memory_manager is None and enable_memory_manager:
+            memory_manager = create_memory_manager(WORKING_DIR)
         self._setup_memory_manager(
             enable_memory_manager,
             memory_manager,
