@@ -427,17 +427,19 @@ CoPawはオープンに開発しており、あらゆる形の貢献を歓迎し
 git clone https://github.com/agentscope-ai/CoPaw.git
 cd CoPaw
 
-# まずコンソールフロントエンドをビルド（Web UIに必須）
-cd console && npm ci && npm run build
-cd ..
-
-# コンソールのビルド出力をパッケージディレクトリにコピー
-mkdir -p src/copaw/console
-cp -R console/dist/. src/copaw/console/
-
-# Pythonパッケージのインストール
+# Pythonパッケージのインストール（npmが利用可能な場合、コンソールフロントエンドは自動的にビルドされます）
 pip install -e .
 ```
+
+> **Web UI について:** [Node.js / npm](https://nodejs.org/) がインストールされていれば、
+> `pip install -e .` は自動的に `console/` 内で `npm ci && npm run build` を実行し、
+> 結果を `src/copaw/console/` にコピーします。npm が見つからない場合でも Python
+> パッケージは正常にインストールされますが、Web コンソールは利用できません。
+> 後から手動でビルドすることもできます:
+> ```bash
+> cd console && npm ci && npm run build && cd ..
+> mkdir -p src/copaw/console && cp -R console/dist/. src/copaw/console/
+> ```
 
 - **開発**（テスト、フォーマット）: `pip install -e ".[dev,full]"`
 - **その後**: `copaw init --defaults` を実行し、次に `copaw app` を実行。
