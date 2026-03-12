@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """Memory management module for CoPaw agents."""
 
+import logging
 import os
 
 from .agent_md_manager import AgentMdManager
 from .hybrid_memory_manager import HybridMemoryManager
 from .memory_manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 
 def create_memory_manager(working_dir: str) -> MemoryManager:
@@ -15,13 +18,22 @@ def create_memory_manager(working_dir: str) -> MemoryManager:
         working_dir: 工作目录路径
 
     Returns:
-        HybridMemoryManager (USE_HYBRID_MEMORY=true) 或 MemoryManager (默认)
+        HybridMemoryManager（默认）或 MemoryManager（USE_HYBRID_MEMORY=false）
     """
     use_hybrid = (
-        os.environ.get("USE_HYBRID_MEMORY", "false").lower() == "true"
+        os.environ.get("USE_HYBRID_MEMORY", "true").lower() != "false"
     )
     if use_hybrid:
+        logger.info(
+            "create_memory_manager(): using HybridMemoryManager (working_dir=%s, MEM0_ENABLE=%s)",
+            working_dir,
+            os.environ.get("MEM0_ENABLE", "true"),
+        )
         return HybridMemoryManager(working_dir)
+    logger.info(
+        "create_memory_manager(): using MemoryManager (working_dir=%s)",
+        working_dir,
+    )
     return MemoryManager(working_dir)
 
 

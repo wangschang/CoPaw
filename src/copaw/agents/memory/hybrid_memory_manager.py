@@ -7,7 +7,7 @@
 
 改动影响：
 - 不修改任何现有文件的核心逻辑
-- 通过 USE_HYBRID_MEMORY=true 环境变量开启
+- 默认启用；可通过 USE_HYBRID_MEMORY=false 显式关闭
 - mem0 初始化/操作失败不影响主流程，静默降级
 """
 import logging
@@ -48,7 +48,7 @@ class HybridMemoryManager(MemoryManager):
     本地数据文件（.mem0_chroma/、.mem0_history.db）自动生成，已在 .gitignore 中。
 
     Environment Variables（新增，全部可选）:
-        USE_HYBRID_MEMORY: 是否启用混合模式，默认 false（需显式开启）
+        USE_HYBRID_MEMORY: 是否启用混合模式，默认 true
         MEM0_ENABLE:       是否初始化 mem0，默认 true
         MEM0_USER_ID:      mem0 用户隔离 ID，默认 "copaw_default"
         MEM0_SEARCH_LIMIT: mem0 检索返回条数，默认 3
@@ -73,6 +73,14 @@ class HybridMemoryManager(MemoryManager):
         mem0_enable = (
             os.environ.get("MEM0_ENABLE", "true").lower() != "false"
         )
+        logger.info(
+            "HybridMemoryManager: initialized (working_dir=%s, mem0_enable=%s, mem0_available=%s, user_id=%s, search_limit=%s)",
+            self._mem0_working_dir,
+            mem0_enable,
+            _MEM0_AVAILABLE,
+            self._mem0_user_id,
+            self._mem0_search_limit,
+        )
         if mem0_enable and _MEM0_AVAILABLE:
             self._init_mem0()
         elif mem0_enable and not _MEM0_AVAILABLE:
@@ -81,6 +89,18 @@ class HybridMemoryManager(MemoryManager):
                 "Running in reme-only mode. "
                 "Install with: pip install mem0ai"
             )
+        else:
+            logger.info(
+                "HybridMemoryManager: mem0 integration disabled by MEM0_ENABLE=false; running in reme-only mode"
+            )
+
+    @staticmethod
+    def _preview_text(content: object, limit: int = 120) -> str:
+        """Return a short single-line preview for log output."""
+        text = str(content).replace("\n", "\\n")
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
 
     def _init_mem0(self) -> None:
         """初始化 mem0 本地实例（失败时静默降级）。
@@ -90,18 +110,42 @@ class HybridMemoryManager(MemoryManager):
         MODEL_BASE_URL、MODEL_NAME）。
         """
         try:
-            # 本地模式：复用 CoPaw 已有的 LLM 环境变量
-            llm_api_key = os.environ.get(
-                "MODEL_API_KEY"
-            ) or os.environ.get("OPENAI_API_KEY", "")
-            llm_base_url = os.environ.get("MODEL_BASE_URL", "")
-            llm_model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+            # 优先从 CoPaw 的 ProviderManager 读取大模型配置，如果失败则回退到环境变量
+            llm_api_key = ""
+            llm_base_url = ""
+            llm_model = ""
+            try:
+                from copaw.providers.provider_manager import ProviderManager
+                manager = ProviderManager.get_instance()
+                active_llm = manager.get_active_model()
+                if active_llm and active_llm.provider_id:
+                    provider = manager.get_provider(active_llm.provider_id)
+                    if provider:
+                        llm_api_key = provider.api_key
+                        llm_base_url = provider.base_url
+                        llm_model = active_llm.model
+            except Exception as e:
+                logger.warning("Failed to load LLM config from ProviderManager: %s", e)
+
+            # 环境变量作为后备
+            if not llm_api_key:
+                llm_api_key = os.environ.get("MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+            if not llm_base_url:
+                llm_base_url = os.environ.get("MODEL_BASE_URL", "")
+            if not llm_model:
+                llm_model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
             mem0_config: dict = {
                 "llm": {
                     "provider": "openai",
                     "config": {
                         "model": llm_model,
+                        "api_key": llm_api_key,
+                    },
+                },
+                "embedder": {
+                    "provider": "openai",
+                    "config": {
                         "api_key": llm_api_key,
                     },
                 },
@@ -122,8 +166,16 @@ class HybridMemoryManager(MemoryManager):
                 ),
             }
             if llm_base_url:
-                mem0_config["llm"]["config"]["base_url"] = llm_base_url
+                mem0_config["llm"]["config"]["openai_base_url"] = llm_base_url
+                mem0_config["embedder"]["config"]["openai_base_url"] = llm_base_url
 
+            logger.info(
+                "HybridMemoryManager: initializing mem0 local store (model=%s, base_url=%s, chroma_path=%s, history_db=%s)",
+                llm_model,
+                llm_base_url or "<default>",
+                mem0_config["vector_store"]["config"]["path"],
+                mem0_config["history_db_path"],
+            )
             self._mem0 = Mem0Memory.from_config(mem0_config)
             logger.info(
                 "HybridMemoryManager: mem0 local initialized "
@@ -132,7 +184,7 @@ class HybridMemoryManager(MemoryManager):
                 llm_model,
             )
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
+            logger.exception(
                 "HybridMemoryManager: mem0 init failed, falling back to "
                 "reme-only mode. Error: %s",
                 exc,
@@ -146,6 +198,9 @@ class HybridMemoryManager(MemoryManager):
     def _mem0_add(self, messages: list) -> None:
         """将消息写入 mem0 提取结构化事实（失败时静默）。"""
         if self._mem0 is None:
+            logger.debug(
+                "HybridMemoryManager: skipped mem0.add() because mem0 client is unavailable"
+            )
             return
         try:
             mem0_msgs = [
@@ -154,14 +209,24 @@ class HybridMemoryManager(MemoryManager):
                 if m.content and m.role in ("user", "assistant")
             ]
             if not mem0_msgs:
+                logger.debug(
+                    "HybridMemoryManager: skipped mem0.add() because no eligible user/assistant messages were found"
+                )
                 return
-            self._mem0.add(mem0_msgs, user_id=self._mem0_user_id)
-            logger.debug(
-                "HybridMemoryManager: mem0.add() wrote %d messages",
+            logger.info(
+                "HybridMemoryManager: writing %d messages to mem0 for user_id=%s (first_message=%s)",
                 len(mem0_msgs),
+                self._mem0_user_id,
+                self._preview_text(mem0_msgs[0].get("content", "")),
+            )
+            self._mem0.add(mem0_msgs, user_id=self._mem0_user_id)
+            logger.info(
+                "HybridMemoryManager: mem0.add() wrote %d messages for user_id=%s",
+                len(mem0_msgs),
+                self._mem0_user_id,
             )
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
+            logger.exception(
                 "HybridMemoryManager: mem0.add() failed (non-critical): %s",
                 exc,
             )
@@ -169,8 +234,17 @@ class HybridMemoryManager(MemoryManager):
     def _mem0_search(self, query: str) -> list:
         """从 mem0 检索结构化事实（失败时返回空列表）。"""
         if self._mem0 is None:
+            logger.debug(
+                "HybridMemoryManager: skipped mem0.search() because mem0 client is unavailable"
+            )
             return []
         try:
+            logger.info(
+                "HybridMemoryManager: querying mem0 (user_id=%s, limit=%d, query=%s)",
+                self._mem0_user_id,
+                self._mem0_search_limit,
+                self._preview_text(query),
+            )
             results = self._mem0.search(
                 query,
                 user_id=self._mem0_user_id,
@@ -181,13 +255,19 @@ class HybridMemoryManager(MemoryManager):
                 if isinstance(results, dict)
                 else []
             )
-            return [
+            facts = [
                 item["memory"]
                 for item in memories
                 if isinstance(item, dict) and item.get("memory")
             ]
+            logger.info(
+                "HybridMemoryManager: mem0.search() returned %d facts for query=%s",
+                len(facts),
+                self._preview_text(query),
+            )
+            return facts
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
+            logger.exception(
                 "HybridMemoryManager: mem0.search() failed (non-critical): %s",
                 exc,
             )
@@ -200,6 +280,10 @@ class HybridMemoryManager(MemoryManager):
     async def summary_memory(self, messages: list[Msg], **kwargs) -> str:
         """生成摘要（reme-ai）并同步写入 mem0。"""
         # reme-ai 原有逻辑完全不动
+        logger.info(
+            "HybridMemoryManager: summary_memory() called with %d messages",
+            len(messages),
+        )
         result = await super().summary_memory(messages=messages, **kwargs)
         # 额外写入 mem0（失败不影响上面的结果）
         self._mem0_add(messages)
@@ -210,6 +294,10 @@ class HybridMemoryManager(MemoryManager):
     ) -> None:
         """触发 reme-ai 后台任务，同时写入 mem0。"""
         # reme-ai 原有后台任务
+        logger.info(
+            "HybridMemoryManager: add_async_summary_task() called with %d messages",
+            len(messages),
+        )
         super().add_async_summary_task(messages=messages, **kwargs)
         # 额外写入 mem0
         self._mem0_add(messages)
@@ -222,6 +310,12 @@ class HybridMemoryManager(MemoryManager):
     ) -> "ToolResponse":
         """混合检索：reme-ai 结果（主）+ mem0 个性化事实（追加末尾）。"""
         # reme-ai 原有检索完全不变
+        logger.info(
+            "HybridMemoryManager: memory_search() started (query=%s, max_results=%d, min_score=%.3f)",
+            self._preview_text(query),
+            max_results,
+            min_score,
+        )
         reme_result = await super().memory_search(
             query=query,
             max_results=max_results,
@@ -231,6 +325,9 @@ class HybridMemoryManager(MemoryManager):
         # mem0 个性化事实检索
         mem0_facts = self._mem0_search(query)
         if not mem0_facts:
+            logger.info(
+                "HybridMemoryManager: memory_search() completed without mem0 augmentation"
+            )
             return reme_result  # 无增量，直接返回原结果
 
         # 将 mem0 事实追加为独立 TextBlock
@@ -240,9 +337,13 @@ class HybridMemoryManager(MemoryManager):
             )
             extra_block = TextBlock(type="text", text=facts_text)
             merged_content = list(reme_result.content or []) + [extra_block]
+            logger.info(
+                "HybridMemoryManager: memory_search() merged %d mem0 facts into response",
+                len(mem0_facts),
+            )
             return ToolResponse(content=merged_content)
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
+            logger.exception(
                 "HybridMemoryManager: failed to merge mem0 results: %s", exc
             )
             return reme_result

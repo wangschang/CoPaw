@@ -385,7 +385,7 @@ CoPaw includes a `HybridMemoryManager` that combines reme-ai (the default memory
 
 | Variable | Required | Description |
 |---|---|---|
-| `USE_HYBRID_MEMORY` | **yes** (to enable) | Set to `true` to activate `HybridMemoryManager` |
+| `USE_HYBRID_MEMORY` | no | `HybridMemoryManager` is enabled by default; set to `false` to disable it |
 | `OPENAI_API_KEY` or `MODEL_API_KEY` | **yes** | API key for the LLM used by mem0 |
 | `MODEL_NAME` | no | LLM model name (default: `gpt-4o-mini`) |
 | `MODEL_BASE_URL` | no | LLM base URL, e.g. for a local proxy like ollama |
@@ -406,7 +406,6 @@ export OPENAI_API_KEY=<your-api-key>
 export MODEL_NAME=gpt-4o-mini
 # Optional: for a local LLM proxy (e.g. ollama)
 # export MODEL_BASE_URL=http://localhost:11434/v1
-export USE_HYBRID_MEMORY=true
 export MEM0_ENABLE=true
 python3 -m copaw
 ```

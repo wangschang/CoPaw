@@ -134,7 +134,7 @@ class CoPawAgent(ReActAgent):
 
         # Setup memory manager
         # If no memory_manager provided, use factory to select implementation
-        # based on USE_HYBRID_MEMORY env var (supports HybridMemoryManager)
+        # based on USE_HYBRID_MEMORY env var (HybridMemoryManager by default)
         if memory_manager is None and enable_memory_manager:
             memory_manager = create_memory_manager(WORKING_DIR)
         self._setup_memory_manager(
@@ -261,6 +261,13 @@ class CoPawAgent(ReActAgent):
 
         self._enable_memory_manager: bool = enable_memory_manager
         self.memory_manager = memory_manager
+        logger.info(
+            "ReActAgent: memory manager setup (enabled=%s, manager=%s)",
+            self._enable_memory_manager,
+            type(self.memory_manager).__name__
+            if self.memory_manager is not None
+            else None,
+        )
 
         # Register memory_search tool if enabled and available
         if self._enable_memory_manager and self.memory_manager is not None:
@@ -274,7 +281,18 @@ class CoPawAgent(ReActAgent):
                 create_memory_search_tool(self.memory_manager),
                 namesake_strategy=namesake_strategy,
             )
-            logger.debug("Registered memory_search tool")
+            logger.info(
+                "ReActAgent: registered memory_search tool with %s",
+                type(self.memory_manager).__name__,
+            )
+        else:
+            logger.info(
+                "ReActAgent: memory_search tool not registered (enabled=%s, manager=%s)",
+                self._enable_memory_manager,
+                type(self.memory_manager).__name__
+                if self.memory_manager is not None
+                else None,
+            )
 
     def _register_hooks(self) -> None:
         """Register pre-reasoning hooks for bootstrap and memory compaction."""

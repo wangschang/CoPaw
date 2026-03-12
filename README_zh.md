@@ -391,7 +391,7 @@ CoPaw 内置 `HybridMemoryManager`，将 reme-ai（默认记忆系统）与 [mem
 
 | 变量 | 是否必须 | 说明 |
 |---|---|---|
-| `USE_HYBRID_MEMORY` | **是**（开启时） | 设为 `true` 启用 `HybridMemoryManager` |
+| `USE_HYBRID_MEMORY` | 否 | 默认启用 `HybridMemoryManager`；设为 `false` 可关闭 |
 | `OPENAI_API_KEY` 或 `MODEL_API_KEY` | **是** | mem0 使用的 LLM API Key |
 | `MODEL_NAME` | 否 | LLM 模型名称（默认：`gpt-4o-mini`） |
 | `MODEL_BASE_URL` | 否 | LLM Base URL，如本地代理（ollama 等） |
@@ -412,7 +412,6 @@ export OPENAI_API_KEY=<your-api-key>
 export MODEL_NAME=gpt-4o-mini
 # 可选：本地 LLM 代理（如 ollama）
 # export MODEL_BASE_URL=http://localhost:11434/v1
-export USE_HYBRID_MEMORY=true
 export MEM0_ENABLE=true
 python3 -m copaw
 ```

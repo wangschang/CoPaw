@@ -6,7 +6,11 @@ Run with:
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,8 +38,24 @@ class TestCreateMemoryManagerFactory:
                 os.environ.pop(key, None)
 
     @patch(_PATCH_MM_INIT, return_value=None)
-    def test_default_mode_returns_memory_manager(self, _mock_init):
-        """Test 1: Default mode (no env vars) returns plain MemoryManager."""
+    def test_default_mode_returns_hybrid_memory_manager(self, _mock_init):
+        """Test 1: Default mode (no env vars) returns HybridMemoryManager."""
+        from copaw.agents.memory import (
+            HybridMemoryManager,
+            MemoryManager,
+            create_memory_manager,
+        )
+
+        manager = create_memory_manager("/tmp/test_workdir")
+
+        assert isinstance(manager, MemoryManager)
+        assert isinstance(manager, HybridMemoryManager)
+
+    @patch(_PATCH_MM_INIT, return_value=None)
+    def test_explicit_false_returns_plain_memory_manager(self, _mock_init):
+        """Test 1b: USE_HYBRID_MEMORY=false returns plain MemoryManager."""
+        os.environ["USE_HYBRID_MEMORY"] = "false"
+
         from copaw.agents.memory import (
             HybridMemoryManager,
             MemoryManager,
@@ -60,6 +80,22 @@ class TestCreateMemoryManagerFactory:
 
         assert isinstance(manager, HybridMemoryManager)
         assert manager._mem0 is None
+
+    @patch(_PATCH_MM_INIT, return_value=None)
+    def test_factory_logs_selected_memory_manager(self, _mock_init):
+        """Factory should emit a log describing the chosen memory manager."""
+        os.environ["USE_HYBRID_MEMORY"] = "true"
+        os.environ["MEM0_ENABLE"] = "false"
+
+        from copaw.agents.memory import create_memory_manager
+
+        with patch("copaw.agents.memory.logger.info") as mock_info:
+            create_memory_manager("/tmp/test_workdir")
+
+        assert any(
+            "using HybridMemoryManager" in str(call.args[0])
+            for call in mock_info.call_args_list
+        )
 
 
 class TestHybridMemoryManagerGracefulDegradation:
@@ -100,6 +136,21 @@ class TestHybridMemoryManagerGracefulDegradation:
 
         result = manager._mem0_search("test")
         assert result == []
+
+    @patch(_PATCH_MM_INIT, return_value=None)
+    def test_mem0_disabled_emits_status_log(self, _mock_init):
+        """Disabled mem0 mode should produce an explicit status log."""
+        os.environ["MEM0_ENABLE"] = "false"
+
+        from copaw.agents.memory import HybridMemoryManager
+
+        with patch("copaw.agents.memory.hybrid_memory_manager.logger.info") as mock_info:
+            HybridMemoryManager("/tmp/test_workdir")
+
+        assert any(
+            "mem0 integration disabled" in str(call.args[0])
+            for call in mock_info.call_args_list
+        )
 
 
 class TestHybridMemoryManagerMockMem0Search:
@@ -144,6 +195,33 @@ class TestHybridMemoryManagerMockMem0Search:
         mock_mem0.search.assert_called_once_with(
             "test query", user_id="test_user", limit=3
         )
+
+    @patch(_PATCH_MM_INIT, return_value=None)
+    def test_mock_mem0_search_logs_query_and_result_count(
+        self,
+        _mock_init,
+    ):
+        """Successful mem0 search should log query context and result count."""
+        os.environ["MEM0_ENABLE"] = "false"
+
+        from copaw.agents.memory import HybridMemoryManager
+
+        manager = HybridMemoryManager("/tmp/test_workdir")
+        mock_mem0 = MagicMock()
+        mock_mem0.search.return_value = {
+            "results": [{"memory": "用户喜欢 Python"}]
+        }
+        manager._mem0 = mock_mem0
+        manager._mem0_user_id = "test_user"
+        manager._mem0_search_limit = 3
+
+        with patch("copaw.agents.memory.hybrid_memory_manager.logger.info") as mock_info:
+            result = manager._mem0_search("test query")
+
+        assert result == ["用户喜欢 Python"]
+        info_messages = [str(call.args[0]) for call in mock_info.call_args_list]
+        assert any("querying mem0" in message for message in info_messages)
+        assert any("returned %d facts" in message for message in info_messages)
 
 
 class TestHybridMemoryManagerSearchMerge:
@@ -201,6 +279,105 @@ class TestHybridMemoryManagerSearchMerge:
         assert last_block.get("type") == "text"
         assert "用户偏好: 喜欢简洁回答" in last_block.get("text", "")
         assert "mem0" in last_block.get("text", "")
+
+
+class TestAgentRunnerUsesMemoryFactory:
+    """AgentRunner should respect hybrid memory factory selection."""
+
+    def test_init_handler_uses_create_memory_manager(
+        self,
+    ):
+        """`python -m copaw app` startup should create memory manager via factory."""
+        stub_command_dispatch = types.ModuleType(
+            "copaw.app.runner.command_dispatch"
+        )
+        stub_command_dispatch._get_last_user_text = MagicMock(return_value="")
+        stub_command_dispatch._is_command = MagicMock(return_value=False)
+        stub_command_dispatch.run_command_path = AsyncMock()
+
+        with patch.dict(
+            sys.modules,
+            {"copaw.app.runner.command_dispatch": stub_command_dispatch},
+        ):
+            from copaw.app.runner.runner import AgentRunner
+
+            mock_manager = MagicMock()
+            mock_manager.start = AsyncMock()
+            mock_manager._mem0 = object()
+            mock_manager._mem0_user_id = "startup-user"
+            mock_manager._mem0_search_limit = 3
+
+            with patch(
+                "copaw.app.runner.runner.SafeJSONSession",
+                autospec=True,
+            ) as mock_session_cls, patch(
+                "copaw.app.runner.runner.create_memory_manager"
+            ) as mock_create_memory_manager:
+                mock_create_memory_manager.return_value = mock_manager
+
+                runner = AgentRunner()
+
+                asyncio.run(runner.init_handler())
+
+                mock_session_cls.assert_called_once()
+                mock_create_memory_manager.assert_called_once()
+                mock_manager.start.assert_awaited_once()
+                assert runner.memory_manager is mock_manager
+
+    def test_init_handler_logs_mem0_status(
+        self,
+    ):
+        """Startup should emit mem0 status logs when hybrid memory is active."""
+        stub_command_dispatch = types.ModuleType(
+            "copaw.app.runner.command_dispatch"
+        )
+        stub_command_dispatch._get_last_user_text = MagicMock(return_value="")
+        stub_command_dispatch._is_command = MagicMock(return_value=False)
+        stub_command_dispatch.run_command_path = AsyncMock()
+
+        with patch.dict(
+            sys.modules,
+            {"copaw.app.runner.command_dispatch": stub_command_dispatch},
+        ):
+            from copaw.app.runner.runner import AgentRunner
+
+            mock_manager = MagicMock()
+            mock_manager.start = AsyncMock()
+            mock_manager._mem0 = object()
+            mock_manager._mem0_user_id = "startup-user"
+            mock_manager._mem0_search_limit = 5
+
+            with patch(
+                "copaw.app.runner.runner.SafeJSONSession",
+                autospec=True,
+            ), patch(
+                "copaw.app.runner.runner.logger.info"
+            ) as mock_logger_info, patch(
+                "copaw.app.runner.runner.create_memory_manager"
+            ) as mock_create_memory_manager:
+                mock_create_memory_manager.return_value = mock_manager
+
+                runner = AgentRunner()
+
+                asyncio.run(runner.init_handler())
+
+                info_messages = [
+                    str(call.args[0])
+                    for call in mock_logger_info.call_args_list
+                ]
+                assert any(
+                    "created memory manager=%s" in message
+                    for message in info_messages
+                )
+                assert any(
+                    "mem0 status enabled=%s user_id=%s search_limit=%s"
+                    in message
+                    for message in info_messages
+                )
+                assert any(
+                    "memory manager started=%s" in message
+                    for message in info_messages
+                )
 
 
 if __name__ == "__main__":

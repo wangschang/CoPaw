@@ -19,7 +19,7 @@ from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
-from ...agents.memory import MemoryManager
+from ...agents.memory import MemoryManager, create_memory_manager
 from ...agents.react_agent import CoPawAgent
 from ...config import load_config
 from ...constant import (
@@ -221,10 +221,35 @@ class AgentRunner(Runner):
 
         try:
             if self.memory_manager is None:
-                self.memory_manager = MemoryManager(
+                self.memory_manager = create_memory_manager(
                     working_dir=str(WORKING_DIR),
                 )
+                logger.info(
+                    "AgentRunner.init_handler(): created memory manager=%s",
+                    self.memory_manager.__class__.__name__,
+                )
+
+                if hasattr(self.memory_manager, "_mem0"):
+                    logger.info(
+                        "AgentRunner.init_handler(): mem0 status enabled=%s user_id=%s search_limit=%s",
+                        getattr(self.memory_manager, "_mem0", None)
+                        is not None,
+                        getattr(
+                            self.memory_manager,
+                            "_mem0_user_id",
+                            "<unknown>",
+                        ),
+                        getattr(
+                            self.memory_manager,
+                            "_mem0_search_limit",
+                            "<unknown>",
+                        ),
+                    )
             await self.memory_manager.start()
+            logger.info(
+                "AgentRunner.init_handler(): memory manager started=%s",
+                self.memory_manager.__class__.__name__,
+            )
         except Exception as e:
             logger.exception(f"MemoryManager start failed: {e}")
 
