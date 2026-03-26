@@ -74,6 +74,8 @@ docs(skills): document Skills Hub import
   pre-commit run --all-files
   pytest
   ```
+  > **说明：** 已安装 [Node.js / npm](https://nodejs.org/) 时，`pip install -e ".[dev,full]"`
+  > 会自动构建前端控制台。若未检测到 npm，Python 包仍可正常安装，但本地 Web 界面将不可用。
 - **如果 pre-commit 自动修改了文件：** 先提交这些修改，再重复执行
   `pre-commit run --all-files`，直到无修改且通过。
 - **CI 策略：** pre-commit 检查失败的 PR 视为未就绪（not merge-ready）。

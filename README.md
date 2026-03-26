@@ -477,17 +477,19 @@ Join the conversation on [GitHub Discussions](https://github.com/agentscope-ai/C
 git clone https://github.com/agentscope-ai/CoPaw.git
 cd CoPaw
 
-# Build console frontend first (required for web UI)
-cd console && npm ci && npm run build
-cd ..
-
-# Copy console build output to package directory
-mkdir -p src/copaw/console
-cp -R console/dist/. src/copaw/console/
-
-# Install Python package
+# Install Python package (console frontend is built automatically when npm is available)
 pip install -e .
 ```
+
+> **Web UI note:** `pip install -e .` will automatically run `npm ci && npm run build` inside
+> `console/` and copy the result to `src/copaw/console/` — as long as
+> [Node.js / npm](https://nodejs.org/) is installed.  If npm is not found the Python package
+> still installs correctly, but the web console will be unavailable.  You can build it later
+> with:
+> ```bash
+> cd console && npm ci && npm run build && cd ..
+> mkdir -p src/copaw/console && cp -R console/dist/. src/copaw/console/
+> ```
 
 - **Dev** (tests, formatting): `pip install -e ".[dev,full]"`
 - **Then**: Run `copaw init --defaults`, then `copaw app`.
